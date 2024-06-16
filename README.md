@@ -17,7 +17,7 @@
     <dependency>
             <groupId>io.github.zzbsss</groupId>
             <artifactId>zzb-mybatis-plus-rowlimit</artifactId>
-            <version>1.0.0</version>
+            <version>1.0.1</version>
     </dependency>
 ``` 
 
