@@ -1,10 +1,7 @@
 package org.zzb.mp.support;
 
-import org.springframework.stereotype.Component;
-
 import java.util.concurrent.ConcurrentHashMap;
 
-@Component
 public class TableSizeCache {
 
     private final ConcurrentHashMap<String, Long> cache = new ConcurrentHashMap<>();
@@ -15,5 +12,9 @@ public class TableSizeCache {
 
     public Long get(String tableName) {
         return cache.get(tableName);
+    }
+
+    public ConcurrentHashMap<String, Long> getCache() {
+        return cache;
     }
 }

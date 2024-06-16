@@ -30,16 +30,16 @@ public class SqlRowCountAutoConfiguration {
     }
 
     @Bean
-    public TableSizeScanner tableSizeScanner(TableSizeCache tableSizeCache, Map<String, DataSource> dataSourceMap, SqlRowCountAutoConfiguration sqlRowCountAutoConfiguration) {
+    public TableSizeScanner tableSizeScanner(Map<String, DataSource> dataSourceMap, SqlRowCountAutoConfiguration sqlRowCountAutoConfiguration) {
         // 兼容 多数据源
         if (dataSourceMap.get("dataSource") instanceof DynamicRoutingDataSource) {
             dataSourceMap = ((DynamicRoutingDataSource) dataSourceMap.get("dataSource")).getCurrentDataSources();
         }
-        return new TableSizeScanner(tableSizeCache, dataSourceMap, sqlRowCountAutoConfiguration);
+        return new TableSizeScanner(tableSizeCache(), dataSourceMap, sqlRowCountAutoConfiguration);
     }
 
     @Bean
-    public SqlRowCountInterceptor sqlRowCountInterceptor(TableSizeCache tableSizeCache, MaxRowCountConfig maxRowCountConfig) {
-        return new SqlRowCountInterceptor(tableSizeCache,maxRowCountConfig, new JsqlParserCountOptimize());
+    public SqlRowCountInterceptor sqlRowCountInterceptor(MaxRowCountConfig maxRowCountConfig) {
+        return new SqlRowCountInterceptor(tableSizeCache(),maxRowCountConfig, new JsqlParserCountOptimize());
     }
 }

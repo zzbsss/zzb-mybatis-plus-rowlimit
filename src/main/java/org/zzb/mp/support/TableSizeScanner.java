@@ -128,8 +128,10 @@ public class TableSizeScanner implements ApplicationRunner {
                 }
             });
         }
-        // 更新本次快照
-        tableSizeCache = currentTableSizeCache;
+        // 更新本次快照 ,只更新内容不更新引用
+        ConcurrentHashMap<String, Long> cache = tableSizeCache.getCache();
+        cache.clear();
+        cache.putAll(currentTableSizeCache.getCache());
         cacheTbleSizeStopWatch.stop();
         log.debug("cache table success \n {}", cacheTbleSizeStopWatch.prettyPrint() );
     }
