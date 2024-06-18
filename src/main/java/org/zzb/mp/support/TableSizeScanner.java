@@ -1,6 +1,7 @@
 package org.zzb.mp.support;
 
 import com.baomidou.mybatisplus.core.toolkit.ExceptionUtils;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
@@ -45,7 +46,7 @@ public class TableSizeScanner implements ApplicationRunner {
         this.sqlRowCountAutoConfiguration = sqlRowCountAutoConfiguration;
     }
 
-    // 每小时执行一次
+    // 定时执行
     @Scheduled(cron = "${zzb.mp.exec-corn}")
     public synchronized void  scanAndCacheTableSizes() {
         TableSizeCache currentTableSizeCache = new TableSizeCache();
@@ -56,6 +57,7 @@ public class TableSizeScanner implements ApplicationRunner {
         StopWatch cacheTbleSizeStopWatch = new StopWatch("cache table");
         cacheTbleSizeStopWatch.start("cache table size");
         MaxRowCountConfig maxRowCountConfig = sqlRowCountAutoConfiguration.maxRowCountConfig();
+        Connection connection = null;
         // 是否多数据源 并且开启只检查指定数据源
         Map<String,DataSource> checkDataSourceMap = dataSourceMap;
         if (dataSourceMap.size() > 1 && maxRowCountConfig.getCheckDataSources().size() > 0) {
@@ -89,7 +91,7 @@ public class TableSizeScanner implements ApplicationRunner {
                     }
                     DataSource dataSource = (DataSource)checkDataSourceMap.values().toArray()[0];
                     long rowCount = getRowCount(getJdbcTemplate(checkTable, dataSource), checkTable);
-                    Connection connection = dataSource.getConnection();
+                    connection = dataSource.getConnection();
                     String catalog = connection.getCatalog();
                     // 仅当表大小大于 指定数量时才进行sql监控
                     if (rowCount >= sqlRowCountAutoConfiguration.maxRowCountConfig().getCheckTableSize()) {
@@ -100,38 +102,46 @@ public class TableSizeScanner implements ApplicationRunner {
                     JdbcUtils.closeConnection(connection);
                 }
             }
-        } catch (Exception e) {
-            throw ExceptionUtils.mpe("get check table filed", e);
-        }
-        if (sqlRowCountAutoConfiguration.maxRowCountConfig().getCheckTables().size() == 0) {
-            // 遍历数据源
-            checkDataSourceMap.forEach((k,dataSource) -> {
-                JdbcTemplate jdbcTemplate = getJdbcTemplate(k, dataSource);
-                List<String> tableNames = jdbcTemplate.queryForList("SHOW TABLES", String.class);
-                // 将连接数据库中的所有表缓存起来
-                for (String tableName : tableNames) {
-                    Connection connection = null;
-                    String catalogName;
-                    try {
-                         connection  = dataSource.getConnection();
-                         catalogName = connection.getCatalog();
-                    } catch (SQLException e) {
-                        throw new RuntimeException(e);
-                    }finally {
+            // 未配置表名
+            if (sqlRowCountAutoConfiguration.maxRowCountConfig().getCheckTables().size() == 0) {
+                // 遍历数据源
+                Set<Map.Entry<String, DataSource>> entries = checkDataSourceMap.entrySet();
+                for (Map.Entry<String, DataSource> entry : entries) {
+                    String key = entry.getKey();
+                    DataSource dataSource = entry.getValue();
+                    JdbcTemplate jdbcTemplate = getJdbcTemplate(key, dataSource);
+                    List<String> tableNames = jdbcTemplate.queryForList("SHOW TABLES", String.class);
+                    // 将连接数据库中的所有表缓存起来
+                    for (String tableName : tableNames) {
+                        String catalogName;
+                        connection  = dataSource.getConnection();
+                        catalogName = connection.getCatalog();
                         JdbcUtils.closeConnection(connection);
-                    }
-                    long rowCount = getRowCount(jdbcTemplate, tableName);
-                    if (rowCount >= sqlRowCountAutoConfiguration.maxRowCountConfig().getCheckTableSize()) {
-                        log.debug("table {} cache size {}", catalogName + "." + tableName, rowCount);
-                        currentTableSizeCache.put(catalogName + "." + tableName, rowCount);
+                        long rowCount = getRowCount(jdbcTemplate, tableName);
+                        // 缓存满足条件的
+                        if (rowCount >= sqlRowCountAutoConfiguration.maxRowCountConfig().getCheckTableSize()) {
+                            log.debug("table {} cache size {}", catalogName + "." + tableName, rowCount);
+                            currentTableSizeCache.put(catalogName + "." + tableName, rowCount);
+                        }
                     }
                 }
-            });
+            }
+            // 更新本次快照 ,只更新内容不更新引用
+            ConcurrentHashMap<String, Long> cache = tableSizeCache.getCache();
+            cache.clear();
+            cache.putAll(currentTableSizeCache.getCache());
+        } catch (Exception e) {
+            throw ExceptionUtils.mpe("cache check table filed", e);
+        }finally {
+            // 归还连接
+            try {
+                if (Objects.nonNull(connection) &&  !connection.isClosed()) {
+                    JdbcUtils.closeConnection(connection);
+                }
+            } catch (SQLException e) {
+                throw new RuntimeException(e);
+            }
         }
-        // 更新本次快照 ,只更新内容不更新引用
-        ConcurrentHashMap<String, Long> cache = tableSizeCache.getCache();
-        cache.clear();
-        cache.putAll(currentTableSizeCache.getCache());
         cacheTbleSizeStopWatch.stop();
         log.debug("cache table success \n {}", cacheTbleSizeStopWatch.prettyPrint() );
     }
