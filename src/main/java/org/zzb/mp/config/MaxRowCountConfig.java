@@ -36,6 +36,18 @@ public class MaxRowCountConfig {
      */
     private List<String> checkTables = new ArrayList<>();
 
+    /**
+     * 超过限制提示
+     */
+    private String errorMessage = "超过最大查询数量限制，本次查询中断";
+
+    public String getErrorMessage() {
+        return errorMessage;
+    }
+
+    public void setErrorMessage(String errorMessage) {
+        this.errorMessage = errorMessage;
+    }
 
     public String getExecCron() {
         return execCron;

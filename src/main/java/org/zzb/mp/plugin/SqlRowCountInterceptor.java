@@ -1,12 +1,19 @@
 package org.zzb.mp.plugin;
 
 import com.baomidou.mybatisplus.core.MybatisDefaultParameterHandler;
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.parser.ISqlParser;
 import com.baomidou.mybatisplus.core.parser.SqlInfo;
 import com.baomidou.mybatisplus.core.toolkit.ExceptionUtils;
+import com.baomidou.mybatisplus.core.toolkit.ParameterUtils;
 import com.baomidou.mybatisplus.core.toolkit.PluginUtils;
 import com.baomidou.mybatisplus.extension.handlers.AbstractSqlParserHandler;
-import com.baomidou.mybatisplus.extension.toolkit.SqlParserUtils;
+import java.util.List;
+import java.util.Optional;
+import net.sf.jsqlparser.JSQLParserException;
+import net.sf.jsqlparser.parser.CCJSqlParserUtil;
+import net.sf.jsqlparser.statement.Statement;
+import net.sf.jsqlparser.util.TablesNamesFinder;
 import org.apache.ibatis.executor.statement.StatementHandler;
 import org.apache.ibatis.mapping.BoundSql;
 import org.apache.ibatis.mapping.MappedStatement;
@@ -18,6 +25,8 @@ import org.apache.ibatis.plugin.Invocation;
 import org.apache.ibatis.plugin.Signature;
 import org.apache.ibatis.reflection.MetaObject;
 import org.apache.ibatis.reflection.SystemMetaObject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.zzb.mp.config.MaxRowCountConfig;
 import org.zzb.mp.support.TableSizeCache;
 
@@ -27,11 +36,14 @@ import java.sql.ResultSet;
 import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.zzb.mp.util.SqlParserUtils;
 
 @Intercepts({
         @Signature(type = StatementHandler.class, method = "prepare", args = {Connection.class, Integer.class})
 })
 public class SqlRowCountInterceptor extends AbstractSqlParserHandler implements Interceptor {
+
+    private final Logger log = LoggerFactory.getLogger(this.getClass());
 
     private TableSizeCache tableSizeCache;
 
@@ -42,8 +54,6 @@ public class SqlRowCountInterceptor extends AbstractSqlParserHandler implements 
      */
     protected ISqlParser countSqlParser;
 
-    private static final Pattern TABLE_NAME_PATTERN =  Pattern.compile("(?i)\\bfrom\\s+([\\w\\.]*)|(?i)\\binner\\s+join\\s+([\\w\\.]*)|(?i)\\bselect\\s+([\\w\\.]*)\\b");;
-
     @Override
     public Object intercept(Invocation invocation) throws Exception {
         StatementHandler statementHandler = PluginUtils.realTarget(invocation.getTarget());
@@ -51,39 +61,46 @@ public class SqlRowCountInterceptor extends AbstractSqlParserHandler implements 
         // this.sqlParser(metaObject);
         MappedStatement mappedStatement = (MappedStatement)metaObject.getValue("delegate.mappedStatement");
         BoundSql boundSql = (BoundSql) metaObject.getValue("delegate.boundSql");
+        Connection connection = (Connection)invocation.getArgs()[0];
         // 先判断是不是SELECT操作
         if (SqlCommandType.SELECT != mappedStatement.getSqlCommandType()
                 || StatementType.CALLABLE == mappedStatement.getStatementType()) {
             return invocation.proceed();
         }
-        Connection connection = (Connection)invocation.getArgs()[0];
+        Optional<IPage> pageOptional = ParameterUtils.findPage(boundSql.getParameterObject());
+        // 是分页不做处理
+        if (pageOptional.isPresent()) {
+            return invocation.proceed();
+        }
+        // 是流式读取不做处理
+        if(mappedStatement.getFetchSize() > 0) {
+            return invocation.proceed();
+        }
         // 分析涉及的表
-        Matcher matcher = TABLE_NAME_PATTERN.matcher(boundSql.getSql());
-        while (matcher.find()) {
-            String tableName = matcher.group(1);
+        Statement statement;
+        try {
+            statement =  CCJSqlParserUtil.parse(boundSql.getSql());
+        } catch (JSQLParserException e) {
+            throw ExceptionUtils.mpe("分析sql失败", e);
+        }
+        // 解析sql中的表
+        TablesNamesFinder tablesNamesFinder = new TablesNamesFinder();
+        List<String> tableList = tablesNamesFinder.getTableList(statement);
+        for (String tableName : tableList) {
             // 判断表是否在监控范围内
             if (Objects.isNull(tableSizeCache.get(connection.getCatalog() + "." + tableName))) {
                 continue;
             }
-            long sqlCount = analyzeSql(mappedStatement, boundSql, connection);
+            // 执行优化后的count sql
+            SqlInfo countSql = SqlParserUtils.getOptimizeCountSql(true, countSqlParser, boundSql.getSql());
+            long sqlCount = this.queryTotal(countSql.getSql(), mappedStatement, boundSql, connection);
             if (sqlCount > maxRowCountConfig.getMaxRowCount()) {
-                throw ExceptionUtils.mpe("Table " + tableName + " exceeds the maximum row count limit.");
+                log.error("error table: {}, max row: {}, original sql: {}", tableName, maxRowCountConfig.getMaxRowCount(), countSql.getSql());
+                throw ExceptionUtils.mpe(maxRowCountConfig.getErrorMessage());
             }
         }
         // 继续执行SQL
         return invocation.proceed();
-    }
-
-    /**
-     * 优化sql count 语句
-     * @param mappedStatement
-     * @param boundSql
-     * @param connection
-     * @return
-     */
-    private long analyzeSql(MappedStatement mappedStatement, BoundSql boundSql, Connection connection) {
-        SqlInfo sqlInfo = SqlParserUtils.getOptimizeCountSql(true, countSqlParser, boundSql.getSql());
-        return this.queryTotal(sqlInfo.getSql(), mappedStatement, boundSql, connection);
     }
 
 
