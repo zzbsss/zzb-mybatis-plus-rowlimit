@@ -1,6 +1,8 @@
 package org.zzb.mp.support;
 
+import com.baomidou.mybatisplus.annotation.DbType;
 import com.baomidou.mybatisplus.core.toolkit.ExceptionUtils;
+import java.util.Optional;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,6 +23,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import org.zzb.mp.plugin.dialects.DialectFactory;
+import org.zzb.mp.plugin.dialects.IDialect;
 
 
 public class TableSizeScanner implements ApplicationRunner {
@@ -110,13 +114,17 @@ public class TableSizeScanner implements ApplicationRunner {
                     String key = entry.getKey();
                     DataSource dataSource = entry.getValue();
                     JdbcTemplate jdbcTemplate = getJdbcTemplate(key, dataSource);
-                    List<String> tableNames = jdbcTemplate.queryForList("SHOW TABLES", String.class);
+                    String catalogName;
+                    // 通过连接获取数据库名称
+                    connection  = dataSource.getConnection();
+                    catalogName = connection.getCatalog();
+                    // 兼容不同数据库方言的查询全表sql
+                    DbType dbType = com.baomidou.mybatisplus.extension.toolkit.JdbcUtils.getDbType(connection.getMetaData().getURL());
+                    IDialect dialect = DialectFactory.getDialect(dbType);
+                    List<String> tableNames = jdbcTemplate.queryForList(dialect.buildQueryAllTablesSql(catalogName), String.class);
+                    JdbcUtils.closeConnection(connection);
                     // 将连接数据库中的所有表缓存起来
                     for (String tableName : tableNames) {
-                        String catalogName;
-                        connection  = dataSource.getConnection();
-                        catalogName = connection.getCatalog();
-                        JdbcUtils.closeConnection(connection);
                         long rowCount = getRowCount(jdbcTemplate, tableName);
                         // 缓存满足条件的
                         if (rowCount >= sqlRowCountAutoConfiguration.maxRowCountConfig().getCheckTableSize()) {
