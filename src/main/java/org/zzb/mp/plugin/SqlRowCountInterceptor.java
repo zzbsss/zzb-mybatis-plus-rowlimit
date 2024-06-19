@@ -73,7 +73,7 @@ public class SqlRowCountInterceptor extends AbstractSqlParserHandler implements 
             return invocation.proceed();
         }
         // 是流式读取不做处理
-        if(mappedStatement.getFetchSize() > 0) {
+        if(Objects.nonNull(mappedStatement.getFetchSize()) && mappedStatement.getFetchSize() > 0) {
             return invocation.proceed();
         }
         // 分析涉及的表
@@ -95,7 +95,7 @@ public class SqlRowCountInterceptor extends AbstractSqlParserHandler implements 
             SqlInfo countSql = SqlParserUtils.getOptimizeCountSql(true, countSqlParser, boundSql.getSql());
             long sqlCount = this.queryTotal(countSql.getSql(), mappedStatement, boundSql, connection);
             if (sqlCount > maxRowCountConfig.getMaxRowCount()) {
-                log.error("error table: {}, max row: {}, original sql: {}", tableName, maxRowCountConfig.getMaxRowCount(), countSql.getSql());
+                log.error("error table: {}, max rows: {}, actual rows:{}, original sql: {},params:{}", tableName, maxRowCountConfig.getMaxRowCount(),sqlCount, countSql.getSql(), mappedStatement.getParameterMap());
                 throw ExceptionUtils.mpe(maxRowCountConfig.getErrorMessage());
             }
         }
