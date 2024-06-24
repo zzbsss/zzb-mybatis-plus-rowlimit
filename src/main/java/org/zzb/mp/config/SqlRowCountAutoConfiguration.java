@@ -3,6 +3,7 @@ package org.zzb.mp.config;
 
 import com.baomidou.dynamic.datasource.DynamicRoutingDataSource;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -31,7 +32,7 @@ public class SqlRowCountAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnBean(DataSource.class)
+    @ConditionalOnMissingBean({DynamicRoutingDataSource.class, DataSource.class})
     public TableSizeScanner tableSizeScanner(Map<String, DataSource> dataSourceMap, SqlRowCountAutoConfiguration sqlRowCountAutoConfiguration) {
         // 兼容 多数据源
         if (dataSourceMap.get("dataSource") instanceof DynamicRoutingDataSource) {
